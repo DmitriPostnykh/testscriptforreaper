@@ -3,3 +3,61 @@
 --- Created by dmitrijpostnyh.
 --- DateTime: 11/18/23 10:41 PM
 ---
+local function no_undo() reaper.defer(function() end) end
+
+local trackName = ({...})[1] or "DRUMS" -- Получаем имя трека из аргументов скрипта
+
+local function main(trackName)
+    local CountTracks = reaper.CountTracks(0)  -- Подсчет количества треков в проекте
+    if CountTracks == 0 then no_undo() return end  -- Если треков нет, выходим из скрипта
+
+    local highestFolderTrack = nil  -- Инициализация переменной для хранения искомого фолдер-трека
+    local highestFolderDepth = math.huge  -- Использование очень большого числа для сравнения глубины
+    local currentDepth = 0  -- Текущая глубина в иерархии треков
+
+    -- Поиск фолдер-трека с заданным именем
+    for i = 0, CountTracks - 1 do
+        local track = reaper.GetTrack(0, i)  -- Получение трека по индексу
+        local folderDepth = reaper.GetMediaTrackInfo_Value(track, 'I_FOLDERDEPTH')  -- Получение глубины трека в иерархии
+        currentDepth = currentDepth + folderDepth
+        local _, currentTrackName = reaper.GetTrackName(track, "")
+        if currentTrackName == trackName and currentDepth < highestFolderDepth then
+            highestFolderTrack = track
+            highestFolderDepth = currentDepth
+        end
+    end
+
+    -- Второй цикл: проверка состояния и выполнение действий
+    if highestFolderTrack then
+        local prevState = reaper.GetExtState("FolderTrackToggle", trackName)  -- Получение предыдущего состояния трека
+
+        -- Если предыдущее состояние было "shown", активируем Solo и обновляем состояние
+        if prevState == "shown" then
+            reaper.SetMediaTrackInfo_Value(highestFolderTrack, "I_SOLO", 1)  -- Включение Solo на фолдер-треке
+            -- Отключение Solo на всех остальных треках
+            for i = 0, CountTracks - 1 do
+                local track = reaper.GetTrack(0, i)
+                if track ~= highestFolderTrack then
+                    reaper.SetMediaTrackInfo_Value(track, "I_SOLO", 0)
+                end
+            end
+            reaper.SetExtState("FolderTrackToggle", trackName, "soloed", false)  -- Обновление состояния трека
+            -- Третий цикл: Отключение Solo, если предыдущее состояние было "soloed"
+        elseif prevState == "soloed" then
+            reaper.SetMediaTrackInfo_Value(highestFolderTrack, "I_SOLO", 0)  -- Отключение Solo на фолдер-треке
+            reaper.SetExtState("FolderTrackToggle", trackName, "shown", false)  -- Сброс состояния трека
+        end
+
+        -- Обновление интерфейса
+        reaper.TrackList_AdjustWindows(false)
+        reaper.UpdateArrange()
+        reaper.Main_OnCommand(40913, 0)  -- Прокрутка экрана к выбранному треку
+    else
+        no_undo()
+    end
+end
+
+local status, err = pcall(main, trackName)
+if not status then
+    reaper.ShowConsoleMsg("Произошла ошибка: " .. tostring(err) .. "\n")
+end
